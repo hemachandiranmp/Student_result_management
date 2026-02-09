@@ -17,7 +17,9 @@ const Login = () => {
         ? { username: formData.username, password: formData.password }
         : { identifier: formData.identifier, password: formData.password };
       
+      console.log(data);
       const res = await axios.post(endpoint, data);
+      console.log(res.data);
       login(res.data);
       navigate(role === 'admin' ? '/admin/dashboard' : '/student/dashboard');
     } catch (err) {

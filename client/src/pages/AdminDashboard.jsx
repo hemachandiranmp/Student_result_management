@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { LayoutDashboard, UserPlus, FileText, Users, LogOut, Edit2, Trash2, X, Check, BookOpen, AlertCircle, ShieldCheck } from 'lucide-react';
+import { toast } from 'react-toastify';
 
 const AdminDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview');
@@ -37,14 +38,18 @@ const AdminDashboard = () => {
 
   const handleAddStudent = async (e) => {
     e.preventDefault();
+    if(studentForm.rollNo === '' || studentForm.email === '' || studentForm.department === '' || studentForm.batch === '' || studentForm.password === '') {
+      toast.error('Please fill all fields');
+      return;
+    }
     try {
       await axios.post('/api/admin/add-student', studentForm, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
-      alert('Student added successfully');
+      toast.success('Student added successfully');
       setStudentForm({ name: '', rollNo: '', email: '', department: '', batch: '', password: '' });
       fetchStudents();
-    } catch (err) { alert(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
   };
 
   const handleUpdateStudent = async (e) => {
@@ -53,10 +58,10 @@ const AdminDashboard = () => {
       await axios.put(`/api/admin/update-student/${editingStudent._id}`, editingStudent, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
-      alert('Student updated successfully');
+      toast.success('Student updated successfully');
       setEditingStudent(null);
       fetchStudents();
-    } catch (err) { alert(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
   };
 
   const handleDeleteStudent = async (id) => {
@@ -65,10 +70,10 @@ const AdminDashboard = () => {
       await axios.delete(`/api/admin/delete-student/${id}`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
-      alert('Student deleted successfully');
+      toast.success('Student deleted successfully');
       fetchStudents();
       fetchResults();
-    } catch (err) { alert(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
   };
 
   const handleAddResult = async (e) => {
@@ -77,10 +82,10 @@ const AdminDashboard = () => {
       await axios.post('/api/admin/add-result', resultForm, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
-      alert('Result published successfully');
+      toast.success('Result published successfully');
       setResultForm({ rollNo: '', semester: '1', subjects: [{ subjectName: '', marks: '' }] });
       fetchResults();
-    } catch (err) { alert(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
   };
 
   const handleUpdateResult = async (e) => {
@@ -92,10 +97,10 @@ const AdminDashboard = () => {
       }, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
-      alert('Result updated successfully');
+      toast.success('Result updated successfully');
       setEditingResult(null);
       fetchResults();
-    } catch (err) { alert(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
   };
 
   const addSubject = () => {
