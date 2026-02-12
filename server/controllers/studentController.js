@@ -29,7 +29,7 @@ exports.viewResult = async (req, res) => {
     const student = await Student.findOne({ rollNo: req.params.rollNo });
     if (!student) return res.status(404).json({ message: "Student not found" });
     
-    const results = await Result.find({ studentId: student._id });
+    const results = await Result.find({ studentId: student._id, published: true });
     res.json(results);
   } catch (error) {
     res.status(500).json({ error: error.message });

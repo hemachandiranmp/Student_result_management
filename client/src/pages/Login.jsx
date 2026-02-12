@@ -2,6 +2,7 @@ import React, { useState, useContext } from 'react';
 import axios from 'axios';
 import { AuthContext } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import logo from '../assets/college_logo.png';
 
 const Login = () => {
   const [role, setRole] = useState('student');
@@ -31,6 +32,13 @@ const Login = () => {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 to-blue-100 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-2xl w-full max-w-md border border-white/50 backdrop-blur-sm">
         <div className="text-center mb-10">
+          <div className="-mx-10 -mt-10 mb-8 overflow-hidden rounded-t-3xl shadow-md">
+            <img 
+              src={logo} 
+              alt="SIET Logo" 
+              className="w-full h-auto bg-[#FFEC00]"
+            />
+          </div>
           <h2 className="text-4xl font-black text-indigo-900 tracking-tight">SIET Portal</h2>
           <p className="text-gray-500 mt-2 font-medium">Student Result Management</p>
         </div>
