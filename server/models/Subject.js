@@ -3,7 +3,13 @@ const mongoose = require('mongoose');
 const SubjectSchema = new mongoose.Schema({
   department: { type: String, required: true },
   semester: { type: Number, required: true },
-  subjectNames: [{ type: String, required: true }] // Array of subject names
+  subjects: [
+    {
+      name: { type: String, required: true },
+      code: { type: String, required: true },
+      credits: { type: Number, required: true, default: 0 }
+    }
+  ]
 });
 
 // Unique index to prevent duplicate subject maps for same dept/sem

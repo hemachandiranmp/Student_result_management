@@ -11,11 +11,12 @@ const AdminDashboard = () => {
   const [editingStudent, setEditingStudent] = useState(null);
   const [editingResult, setEditingResult] = useState(null);
   const [identifiedStudent, setIdentifiedStudent] = useState(null);
+  const [allSubjectMaps, setAllSubjectMaps] = useState([]);
   
   // Forms
   const [studentForm, setStudentForm] = useState({ name: '', rollNo: '', email: '', department: '', batch: '', password: '' });
   const [resultForm, setResultForm] = useState({ rollNo: '', semester: '1', subjects: [] });
-  const [curriculumForm, setCurriculumForm] = useState({ department: '', semester: '1', subjectNames: [''] });
+  const [curriculumForm, setCurriculumForm] = useState({ department: '', semester: '1', subjects: [{ name: '', code: '', credits: '' }] });
   
   // Filters
   const [filters, setFilters] = useState({ department: '', batch: '' });
@@ -24,12 +25,20 @@ const AdminDashboard = () => {
   useEffect(() => {
     fetchStudents();
     fetchResults();
+    fetchAllSubjectMaps();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'curriculum') {
+      fetchAllSubjectMaps();
+    }
+  }, [activeTab]);
 
   // Auto-load subjects when roll number or semester changes
   useEffect(() => {
-    if (resultForm.rollNo.length >= 3) {
-      const student = students.find(s => s.rollNo.toUpperCase().trim() === resultForm.rollNo.toUpperCase().trim());
+    const searchRoll = resultForm.rollNo.trim().toUpperCase();
+    if (searchRoll.length >= 2) {
+      const student = students.find(s => s.rollNo.toUpperCase() === searchRoll);
       if (student) {
         setIdentifiedStudent(student);
         loadSubjectsForEntry(student.department, resultForm.semester);
@@ -42,6 +51,30 @@ const AdminDashboard = () => {
       setResultForm(prev => ({ ...prev, subjects: [] }));
     }
   }, [resultForm.rollNo, resultForm.semester, students]);
+    
+  // Auto-load existing curriculum when department or semester changes
+  useEffect(() => {
+    if (activeTab === 'curriculum' && curriculumForm.department.trim() !== '' && curriculumForm.semester) {
+      const delayDebounceFn = setTimeout(() => {
+        loadCurriculumForEdit(curriculumForm.department, curriculumForm.semester);
+      }, 500);
+      return () => clearTimeout(delayDebounceFn);
+    }
+  }, [curriculumForm.department, curriculumForm.semester, activeTab]);
+
+  const loadCurriculumForEdit = async (dept, sem) => {
+    try {
+      const res = await axios.get(`/api/admin/subjects?department=${dept.toUpperCase()}&semester=${sem}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (res.data.length > 0) {
+        setCurriculumForm(prev => ({
+          ...prev,
+          subjects: res.data.map(sub => ({ name: sub.name, code: sub.code, credits: sub.credits }))
+        }));
+      }
+    } catch (err) { console.error(err); }
+  };
 
   const loadSubjectsForEntry = async (dept, sem) => {
     try {
@@ -51,7 +84,7 @@ const AdminDashboard = () => {
       if (res.data.length > 0) {
         setResultForm(prev => ({
           ...prev,
-          subjects: res.data.map(name => ({ subjectName: name, marks: '' }))
+          subjects: res.data.map(sub => ({ subjectName: sub.name, subjectCode: sub.code, grade: '', credits: sub.credits }))
         }));
       } else {
         setResultForm(prev => ({ ...prev, subjects: [] }));
@@ -77,6 +110,15 @@ const AdminDashboard = () => {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
       setResults(res.data);
+    } catch (err) { console.error(err); }
+  };
+
+  const fetchAllSubjectMaps = async () => {
+    try {
+      const res = await axios.get('/api/admin/all-subject-maps', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      setAllSubjectMaps(res.data);
     } catch (err) { console.error(err); }
   };
 
@@ -145,8 +187,12 @@ const AdminDashboard = () => {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
       toast.success('Curriculum mapped successfully');
-      setCurriculumForm({ department: '', semester: '1', subjectNames: [''] });
-    } catch (err) { toast.error('Check all fields'); }
+      setCurriculumForm({ department: '', semester: '1', subjects: [{ name: '', code: '', credits: '' }] });
+      fetchAllSubjectMaps();
+    } catch (err) { 
+      console.error(err);
+      toast.error(err.response?.data?.error || err.message || 'Check all fields'); 
+    }
   };
 
   const handleAddStudent = async (e) => {
@@ -204,7 +250,12 @@ const AdminDashboard = () => {
   const handleBatchPublish = async (e) => {
     e.preventDefault();
     try {
-      const res = await axios.post('/api/admin/batch-publish', publishForm, {
+      const normalizedPublish = {
+        ...publishForm,
+        department: publishForm.department.trim().toUpperCase(),
+        batch: publishForm.batch.trim().toUpperCase()
+      };
+      const res = await axios.post('/api/admin/batch-publish', normalizedPublish, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
       toast.success(res.data.message);
@@ -235,6 +286,16 @@ const AdminDashboard = () => {
     } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
   };
 
+  const handleToggleResultStatus = async (id) => {
+    try {
+      const res = await axios.patch(`/api/admin/toggle-result-status/${id}`, {}, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      toast.success(res.data.message);
+      fetchResults();
+    } catch (err) { toast.error('Status update failed'); }
+  };
+
   const filteredStudents = students.filter(s => {
     return (filters.department === '' || s.department === filters.department) &&
            (filters.batch === '' || s.batch === filters.batch);
@@ -245,9 +306,15 @@ const AdminDashboard = () => {
            (filters.batch === '' || r.batch === filters.batch);
   });
 
-  const uniqueDepts = [...new Set(students.map(s => s.department))];
+  const uniqueDepts = [...new Set([
+    ...students.map(s => s.department),
+    ...allSubjectMaps.map(m => m.department)
+  ])];
   const uniqueBatches = [...new Set(students.map(s => s.batch))];
-  const uniqueSems = [...new Set(results.map(r => r.semester))].sort();
+  const uniqueSems = [...new Set([
+    ...results.map(r => r.semester),
+    ...allSubjectMaps.map(m => m.semester)
+  ])].sort();
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden font-sans">
@@ -257,7 +324,7 @@ const AdminDashboard = () => {
           <div className="bg-indigo-600 w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg shadow-indigo-500/30">
             <ShieldCheck size={32} />
           </div>
-          <h2 className="text-xl font-black tracking-widest text-white uppercase italic">Staff OS v2</h2>
+          <h2 className="text-xl font-black tracking-widest text-white uppercase italic">Admin</h2>
           <p className="text-[10px] text-indigo-400 font-black tracking-widest uppercase mt-2">Academic Control Unit</p>
         </div>
 
@@ -357,11 +424,11 @@ const AdminDashboard = () => {
                    <div className="grid grid-cols-2 gap-8">
                       <div className="space-y-2">
                         <label className="text-[10px] font-black text-indigo-900 uppercase tracking-widest ml-1">Target Department</label>
-                        <select className="w-full p-5 bg-indigo-50/30 border-2 border-transparent focus:border-indigo-600 rounded-2xl outline-none font-bold text-gray-800"
-                          value={curriculumForm.department} onChange={e => setCurriculumForm({...curriculumForm, department: e.target.value})} required>
-                          <option value="">Select Department</option>
-                          {uniqueDepts.map(d => <option key={d} value={d}>{d}</option>)}
-                        </select>
+                         <input list="dept-list" placeholder="Department (e.g. CSE)" className="w-full p-5 bg-indigo-50/30 border-2 border-transparent focus:border-indigo-600 rounded-2xl outline-none font-bold text-gray-800"
+                           value={curriculumForm.department} onChange={e => setCurriculumForm({...curriculumForm, department: e.target.value})} required />
+                         <datalist id="dept-list">
+                           {uniqueDepts.map(d => <option key={d} value={d}>{d}</option>)}
+                         </datalist>
                       </div>
                       <div className="space-y-2">
                         <label className="text-[10px] font-black text-indigo-900 uppercase tracking-widest ml-1">Target Semester</label>
@@ -375,18 +442,40 @@ const AdminDashboard = () => {
                    <div className="space-y-4">
                       <div className="flex items-center justify-between">
                          <h3 className="text-xs font-black text-gray-400 uppercase tracking-[0.2em]">Course Syllabus List</h3>
-                         <button type="button" onClick={() => setCurriculumForm({...curriculumForm, subjectNames: [...curriculumForm.subjectNames, '']})} className="text-indigo-600 font-black text-[10px] uppercase tracking-widest">+ Append Course</button>
+                          <button type="button" onClick={() => setCurriculumForm({...curriculumForm, subjects: [...curriculumForm.subjects, { name: '', code: '', credits: '' }]})} className="text-indigo-600 font-black text-[10px] uppercase tracking-widest">+ Append Course</button>
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                         {curriculumForm.subjectNames.map((name, idx) => (
-                           <div key={idx} className="relative group">
-                             <input type="text" value={name} placeholder="Course Title" className="w-full p-4 bg-gray-50 border-2 border-transparent focus:border-indigo-600 rounded-2xl font-bold transition-all"
-                               onChange={(e) => {
-                                 const updated = [...curriculumForm.subjectNames];
-                                 updated[idx] = e.target.value;
-                                 setCurriculumForm({...curriculumForm, subjectNames: updated});
-                               }} required />
-                             {idx > 0 && <button type="button" onClick={() => setCurriculumForm({...curriculumForm, subjectNames: curriculumForm.subjectNames.filter((_, i) => i !== idx)})} className="absolute right-4 top-4 text-red-300 group-hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={16}/></button>}
+                      <div className="space-y-4">
+                         {curriculumForm.subjects.map((sub, idx) => (
+                           <div key={idx} className="flex gap-4 items-center group">
+                             <div className="flex-1">
+                               <input type="text" value={sub.name} placeholder="Course Title" className="w-full p-4 bg-slate-50 border-2 border-slate-100 focus:border-indigo-600 focus:bg-white rounded-2xl font-bold transition-all text-xs"
+                                 onChange={(e) => {
+                                   const updated = [...curriculumForm.subjects];
+                                   updated[idx].name = e.target.value;
+                                   setCurriculumForm({...curriculumForm, subjects: updated});
+                                 }} required />
+                             </div>
+                             <div className="w-32">
+                               <input type="text" value={sub.code} placeholder="Code" className="w-full p-4 bg-indigo-50/50 border-2 border-indigo-100 focus:border-indigo-600 focus:bg-white rounded-2xl font-black text-center transition-all text-xs uppercase text-indigo-700"
+                                 onChange={(e) => {
+                                   const updated = [...curriculumForm.subjects];
+                                   updated[idx].code = e.target.value;
+                                   setCurriculumForm({...curriculumForm, subjects: updated});
+                                 }} required />
+                             </div>
+                             <div className="w-24">
+                               <input type="number" value={sub.credits} placeholder="Cr" className="w-full p-4 bg-slate-50 border-2 border-slate-100 focus:border-indigo-600 focus:bg-white rounded-2xl font-black text-center transition-all text-xs"
+                                 onChange={(e) => {
+                                   const updated = [...curriculumForm.subjects];
+                                   updated[idx].credits = e.target.value;
+                                   setCurriculumForm({...curriculumForm, subjects: updated});
+                                 }} required />
+                             </div>
+                             {idx > 0 && (
+                               <button type="button" onClick={() => setCurriculumForm({...curriculumForm, subjects: curriculumForm.subjects.filter((_, i) => i !== idx)})} className="p-4 text-red-300 hover:text-red-500 transition-all">
+                                 <Trash2 size={20}/>
+                               </button>
+                             )}
                            </div>
                          ))}
                       </div>
@@ -394,6 +483,42 @@ const AdminDashboard = () => {
 
                    <button type="submit" className="bg-indigo-600 text-white px-12 py-5 rounded-[1.5rem] font-black hover:bg-black shadow-xl shadow-indigo-600/20 transition-all uppercase tracking-widest text-xs">Establish Curriculum Map</button>
                 </form>
+
+                 <div className="mt-16 pt-10 border-t border-gray-100">
+                    <div className="flex items-center justify-between mb-8">
+                       <h3 className="text-sm font-black text-indigo-900 uppercase tracking-widest flex items-center">
+                          <span className="w-8 h-1 bg-indigo-600 mr-3 rounded-full"></span> Active Curriculum Inventory
+                       </h3>
+                       <span className="text-[10px] font-black text-slate-400 uppercase bg-slate-50 px-3 py-1 rounded-full">{allSubjectMaps.length} SEMESTERS MAPPED</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                       {allSubjectMaps.length > 0 ? allSubjectMaps.map((map, idx) => (
+                        <div key={idx} className="bg-slate-50/50 p-6 rounded-3xl border border-slate-100 group hover:border-indigo-200 transition-all">
+                           <div className="flex justify-between items-start">
+                              <div>
+                                 <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-1">{map.department}</p>
+                                 <h4 className="text-xl font-black text-slate-900">Semester 0{map.semester}</h4>
+                              </div>
+                              <div className="text-right">
+                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Courses</p>
+                                 <p className="text-sm font-black text-indigo-900">{map.subjects.length}</p>
+                              </div>
+                           </div>
+                           <div className="mt-4 flex flex-wrap gap-2">
+                              {map.subjects.slice(0, 3).map((s, i) => (
+                                <span key={i} className="text-[9px] font-bold bg-white text-slate-500 px-2 py-1 rounded-lg border border-slate-100">{s.code}</span>
+                              ))}
+                              {map.subjects.length > 3 && <span className="text-[9px] font-bold text-slate-400 px-2 py-1">+{map.subjects.length - 3} more</span>}
+                           </div>
+                        </div>
+                      )) : (
+                        <div className="col-span-2 py-10 text-center bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
+                           <p className="text-xs font-black text-slate-400 uppercase tracking-widest">No Curriculum Mapped Yet</p>
+                        </div>
+                      )}
+                   </div>
+                </div>
              </div>
           </div>
         )}
@@ -484,8 +609,8 @@ const AdminDashboard = () => {
                   <div className="grid grid-cols-2 gap-8 bg-slate-50 p-8 rounded-[2rem]">
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-900 uppercase tracking-widest ml-1">Credential Identifier</label>
-                      <input type="text" placeholder="Enter Roll Number / ID" className="w-full p-5 bg-white border-2 border-transparent focus:border-slate-900 rounded-2xl outline-none font-black text-slate-900 uppercase tracking-widest"
-                        value={resultForm.rollNo} onChange={e => setResultForm({...resultForm, rollNo: e.target.value.toUpperCase().trim()})} />
+                      <input type="text" placeholder="ROLL NUMBER" className="w-full p-5 bg-white border-2 border-transparent focus:border-indigo-600 rounded-2xl outline-none font-black text-slate-900 placeholder:text-slate-200"
+                        value={resultForm.rollNo} onChange={e => setResultForm({...resultForm, rollNo: e.target.value})} />
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-900 uppercase tracking-widest ml-1">Assessment Semester</label>
@@ -497,17 +622,24 @@ const AdminDashboard = () => {
                   </div>
 
                   {identifiedStudent && (
-                    <div className="bg-indigo-50/50 p-6 rounded-[1.5rem] border border-indigo-100 animate-in">
-                       <div className="flex items-center space-x-4">
-                          <div className="bg-indigo-600 text-white p-3 rounded-xl shadow-lg">
-                             <Check size={20} />
-                          </div>
-                          <div>
-                             <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Identified Student</p>
-                             <div className="flex items-center space-x-3">
-                                <h3 className="text-lg font-black text-indigo-950">{identifiedStudent.name}</h3>
-                                <span className="text-[10px] px-2 py-0.5 bg-indigo-200 text-indigo-700 rounded-md font-bold">{identifiedStudent.department}</span>
+                    <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-8 rounded-[2rem] text-white shadow-xl animate-in">
+                       <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-6">
+                             <div className="bg-white/20 backdrop-blur-md p-4 rounded-2xl">
+                                <Users size={32} className="text-white" />
                              </div>
+                             <div>
+                                <p className="text-[10px] font-black text-indigo-100 uppercase tracking-widest opacity-70">Authenticated Profile</p>
+                                <h3 className="text-2xl font-black tracking-tight">{identifiedStudent.name}</h3>
+                                <div className="flex items-center space-x-3 mt-1">
+                                   <span className="text-[10px] font-black uppercase tracking-widest bg-white/20 px-2 py-0.5 rounded-md">{identifiedStudent.department}</span>
+                                   <span className="text-[10px] font-black uppercase tracking-widest bg-white/20 px-2 py-0.5 rounded-md">Batch {identifiedStudent.batch}</span>
+                                </div>
+                             </div>
+                          </div>
+                          <div className="text-right">
+                             <p className="text-[10px] font-black text-indigo-100 uppercase tracking-widest opacity-70">Roll Identification</p>
+                             <p className="text-xl font-black tracking-widest">{identifiedStudent.rollNo}</p>
                           </div>
                        </div>
                     </div>
@@ -520,19 +652,28 @@ const AdminDashboard = () => {
                        </h3>
                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                          {resultForm.subjects.map((sub, idx) => (
-                           <div key={idx} className="flex items-center space-x-4 bg-white border border-slate-100 p-4 rounded-3xl shadow-sm">
+                           <div key={idx} className="flex items-center space-x-4 bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-all">
                              <div className="flex-1">
-                               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{sub.subjectName}</p>
-                               <input type="number" placeholder="Enter Score (0-100)" className="w-full p-1 font-black text-2xl text-slate-900 outline-none border-b-2 border-transparent focus:border-slate-900 transition-all"
-                                 value={sub.marks} onChange={(e) => {
-                                   const updated = [...resultForm.subjects];
-                                   updated[idx].marks = e.target.value;
-                                   setResultForm({...resultForm, subjects: updated});
-                                 }} required />
-                             </div>
-                             <div className="w-12 h-12 bg-slate-50 flex items-center justify-center rounded-2xl">
-                               <Check size={20} className={sub.marks ? 'text-green-500' : 'text-slate-200'} />
-                             </div>
+                               <div className="flex justify-between items-center mb-1">
+                                 <div>
+                                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">{sub.subjectName}</p>
+                                   <p className="text-[9px] font-black text-indigo-400 uppercase tracking-tight mt-1">{sub.subjectCode}</p>
+                                 </div>
+                                 <span className="text-[10px] px-2 py-0.5 bg-indigo-50 text-indigo-500 rounded font-black">{sub.credits}C</span>
+                               </div>
+                                <select className="w-full p-1 font-black text-2xl text-indigo-950 outline-none border-b-2 border-transparent focus:border-indigo-600 transition-all bg-transparent cursor-pointer"
+                                  value={sub.grade} onChange={(e) => {
+                                    const updated = [...resultForm.subjects];
+                                    updated[idx].grade = e.target.value;
+                                    setResultForm({...resultForm, subjects: updated});
+                                  }} required>
+                                  <option value="">GRADE</option>
+                                  {['O', 'A+', 'A', 'B+', 'B', 'C', 'U', 'RA', 'SA', 'W'].map(g => <option key={g} value={g}>{g}</option>)}
+                                </select>
+                              </div>
+                              <div className="w-12 h-12 bg-indigo-50 flex items-center justify-center rounded-2xl">
+                                <Check size={20} className={sub.grade ? 'text-indigo-600' : 'text-slate-200'} />
+                              </div>
                            </div>
                          ))}
                        </div>
@@ -570,6 +711,7 @@ const AdminDashboard = () => {
                        <select className="w-full p-4 bg-white rounded-2xl font-black text-indigo-900 outline-none border-2 border-transparent focus:border-indigo-600"
                          value={publishForm.department} onChange={e => setPublishForm({...publishForm, department: e.target.value})}>
                          <option value="">Select</option>
+                         <option value="ALL">ALL DEPARTMENTS</option>
                          {uniqueDepts.map(d => <option key={d} value={d}>{d}</option>)}
                        </select>
                     </div>
@@ -697,7 +839,7 @@ const AdminDashboard = () => {
                          <th className="p-8 text-left text-white">Student</th>
                          <th className="p-8 text-left text-white">Semester</th>
                          <th className="p-8 text-left text-white">Scores Matrix</th>
-                         <th className="p-8 text-left text-white">Total</th>
+                         <th className="p-8 text-left text-white">GPA / Result</th>
                          <th className="p-8 text-left text-white">Status</th>
                          <th className="p-8 text-center">Actions</th>
                       </tr>
@@ -715,28 +857,42 @@ const AdminDashboard = () => {
                              <span className="bg-slate-100 text-slate-600 px-4 py-2 rounded-xl font-black text-xs">Sem {r.semester}</span>
                           </td>
                           <td className="p-8">
-                             <div className="flex flex-wrap gap-2">
-                                {r.subjects.map((s, i) => (
-                                  <div key={i} className="flex flex-col items-center bg-white border border-slate-100 p-2 rounded-xl min-w-[60px]">
-                                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">{s.subjectName}</span>
-                                    <span className="text-xs font-black text-indigo-600">{s.marks}</span>
+                             <div className="grid grid-cols-4 gap-2 w-max">
+                                {r.subjects.slice(0, 8).map((s, i) => (
+                                  <div key={i} className="flex flex-col items-center justify-center bg-slate-50 border border-slate-100 p-2 rounded-lg w-14 h-14 hover:bg-white hover:shadow-md transition-all group">
+                                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter truncate max-w-full group-hover:text-indigo-400">
+                                      {s.subjectCode && s.subjectCode !== '---' ? s.subjectCode : s.subjectName.substring(0, 3)}
+                                    </span>
+                                    <span className={`text-sm font-black ${['U', 'RA', 'SA', 'AB'].includes(s.grade) ? 'text-red-500' : 'text-slate-900'}`}>
+                                      {s.grade}
+                                    </span>
                                   </div>
                                 ))}
+                                {r.subjects.length > 8 && (
+                                  <div className="flex items-center justify-center bg-indigo-50 border border-indigo-100 p-2 rounded-lg w-14 h-14">
+                                    <span className="text-[10px] font-black text-indigo-400">+{r.subjects.length - 8}</span>
+                                  </div>
+                                )}
                              </div>
                           </td>
-                          <td className="p-8">
-                             <div>
-                                <p className="text-2xl font-black text-slate-950">{r.total}</p>
-                                <p className="text-[10px] font-black text-green-500 uppercase tracking-widest">{r.grade} Grade</p>
-                             </div>
-                          </td>
-                          <td className="p-8">
-                             {r.published ? (
-                               <span className="inline-flex items-center px-4 py-1.5 bg-green-500 text-white rounded-full font-black text-[9px] uppercase tracking-widest border-2 border-green-100">Live</span>
-                             ) : (
-                               <span className="inline-flex items-center px-4 py-1.5 bg-slate-200 text-slate-500 rounded-full font-black text-[9px] uppercase tracking-widest">Draft</span>
-                             )}
-                          </td>
+                           <td className="p-8">
+                              <div>
+                                 <p className="text-2xl font-black text-slate-950">{r.average}</p>
+                                 <p className={`text-[10px] font-black uppercase tracking-widest ${r.grade === 'FAIL' ? 'text-red-500' : 'text-green-500'}`}>{r.grade}</p>
+                              </div>
+                           </td>
+                           <td className="p-8">
+                              <button 
+                                onClick={() => handleToggleResultStatus(r._id)}
+                                className={`inline-flex items-center px-4 py-1.5 rounded-full font-black text-[9px] uppercase tracking-widest border-2 transition-all ${
+                                  r.published 
+                                  ? 'bg-green-500 text-white border-green-100' 
+                                  : 'bg-slate-200 text-slate-500 border-slate-100 hover:bg-slate-300'
+                                }`}
+                              >
+                                {r.published ? 'Live' : 'Draft'}
+                              </button>
+                           </td>
                           <td className="p-8">
                              <div className="flex items-center justify-center space-x-3 transition-all duration-300">
                                <button className="p-3 bg-indigo-100 text-indigo-700 hover:bg-indigo-600 hover:text-white rounded-2xl shadow-sm transition-all"
@@ -765,42 +921,52 @@ const AdminDashboard = () => {
         {/* EDIT RESULT MODAL */}
         {editingResult && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center z-[110] p-6">
-            <div className="bg-white w-full max-w-3xl rounded-[3rem] shadow-2xl overflow-hidden animate-in">
-               <div className="bg-slate-900 p-8 text-white flex justify-between items-center">
-                  <div>
-                    <h2 className="text-3xl font-black tracking-tight">Modify Scorecard</h2>
-                    <p className="text-slate-400 font-medium">Updating {editingResult.studentId?.name}'s Sem {editingResult.semester} data</p>
+               <div className="bg-white w-full max-w-3xl max-h-[90vh] flex flex-col rounded-[3rem] shadow-2xl overflow-hidden animate-in">
+                  <div className="bg-slate-900 p-8 text-white flex justify-between items-center shrink-0">
+                     <div>
+                       <h2 className="text-3xl font-black tracking-tight">Modify Scorecard</h2>
+                       <p className="text-slate-400 font-medium">Updating {editingResult.studentId?.name}'s Sem {editingResult.semester} data</p>
+                     </div>
+                     <button onClick={() => setEditingResult(null)} className="p-3 hover:bg-white/10 rounded-2xl transition-all">
+                       <X size={24} />
+                     </button>
                   </div>
-                  <button onClick={() => setEditingResult(null)} className="p-3 hover:bg-white/10 rounded-2xl transition-all">
-                    <X size={24} />
-                  </button>
-               </div>
-               
-               <form onSubmit={handleUpdateResult} className="p-10 space-y-10">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {editingResult.subjects.map((sub, idx) => (
-                      <div key={idx} className="flex items-center space-x-4 bg-slate-50 p-4 rounded-3xl border border-slate-100">
-                        <div className="flex-1">
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{sub.subjectName}</p>
-                          <input type="number" className="w-full p-1 font-black text-2xl text-slate-950 bg-transparent outline-none border-b-2 border-transparent focus:border-slate-900 transition-all"
-                            value={sub.marks} onChange={(e) => {
-                              const updated = [...editingResult.subjects];
-                              updated[idx].marks = e.target.value;
-                              setEditingResult({...editingResult, subjects: updated});
-                            }} required />
+                  
+                  <div className="flex-1 overflow-y-auto p-10">
+                     <form onSubmit={handleUpdateResult} className="space-y-10">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                           {editingResult.subjects.map((sub, idx) => (
+                             <div key={idx} className="flex items-center space-x-4 bg-slate-50 p-5 rounded-[2rem] border border-slate-100">
+                               <div className="flex-1">
+                                 <div className="flex justify-between items-center mb-1">
+                                    <div>
+                                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">{sub.subjectName}</p>
+                                       <p className="text-[9px] font-black text-indigo-400 uppercase tracking-tight mt-1">{sub.subjectCode}</p>
+                                    </div>
+                                    <span className="text-[10px] font-black text-slate-300">{sub.credits}C</span>
+                                 </div>
+                                  <select className="w-full p-1 font-black text-2xl text-slate-950 bg-transparent outline-none border-b-2 border-transparent focus:border-slate-900 transition-all cursor-pointer"
+                                    value={sub.grade} onChange={(e) => {
+                                      const updated = [...editingResult.subjects];
+                                      updated[idx].grade = e.target.value;
+                                      setEditingResult({...editingResult, subjects: updated});
+                                    }} required>
+                                    {['O', 'A+', 'A', 'B+', 'B', 'C', 'U', 'RA', 'SA', 'W', 'AB'].map(g => <option key={g} value={g}>{g}</option>)}
+                                  </select>
+                               </div>
+                             </div>
+                           ))}
                         </div>
-                      </div>
-                    ))}
-                  </div>
 
-                  <div className="flex space-x-4 pt-6 border-t border-slate-50">
-                    <button type="submit" className="flex-1 bg-slate-950 text-white py-6 rounded-3xl font-black uppercase tracking-[0.2em] text-xs hover:bg-black transition-all shadow-xl">Recalculate & Save</button>
-                    <button type="button" onClick={() => setEditingResult(null)} className="px-10 py-6 bg-slate-100 text-slate-400 rounded-3xl font-black uppercase tracking-widest text-xs hover:bg-slate-200 transition-all">Cancel</button>
+                        <div className="flex space-x-4 pt-6 border-t border-slate-50 sticky bottom-0 bg-white z-10 pb-2">
+                           <button type="submit" className="flex-1 bg-slate-950 text-white py-6 rounded-3xl font-black uppercase tracking-[0.2em] text-xs hover:bg-black transition-all shadow-xl">Recalculate & Save</button>
+                           <button type="button" onClick={() => setEditingResult(null)} className="px-10 py-6 bg-slate-100 text-slate-400 rounded-3xl font-black uppercase tracking-widest text-xs hover:bg-slate-200 transition-all">Cancel</button>
+                        </div>
+                     </form>
                   </div>
-               </form>
+               </div>
             </div>
-          </div>
-        )}
+          )}
 
         {/* EDIT STUDENT MODAL */}
         {editingStudent && (

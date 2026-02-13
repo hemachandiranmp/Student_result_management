@@ -11,12 +11,14 @@ router.delete('/delete-student/:id', auth, adminController.deleteStudent);
 
 router.post('/map-subjects', auth, adminController.mapSubjects);
 router.get('/subjects', auth, adminController.getSubjects);
+router.get('/all-subject-maps', auth, adminController.getAllSubjectMaps);
 
 router.post('/add-result', auth, adminController.addResult);
 router.get('/results', auth, adminController.getAllResults);
 router.put('/update-result/:id', auth, adminController.updateResult);
 router.delete('/delete-result/:id', auth, adminController.deleteResult);
 router.post('/batch-publish', auth, adminController.batchPublishResults);
+router.patch('/toggle-result-status/:id', auth, adminController.toggleResultStatus);
 
 router.get('/students', auth, adminController.getAllStudents);
 

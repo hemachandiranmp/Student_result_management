@@ -8,7 +8,9 @@ const ResultSchema = new mongoose.Schema({
   subjects: [
     {
       subjectName: { type: String, required: true },
-      marks: { type: Number, required: true }
+      subjectCode: { type: String, required: true },
+      grade: { type: String, required: true },
+      credits: { type: Number, default: 0 }
     }
   ],
   total: { type: Number, required: true },

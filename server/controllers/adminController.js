@@ -7,23 +7,38 @@ const jwt = require('jsonwebtoken');
 
 // Helper: Calculate Grade
 const calculateResultData = (subjects) => {
+  const gradePoints = {
+    'O': 10, 'A+': 9, 'A': 8, 'B+': 7, 'B': 6, 'C': 5, 'U': 0, 'RA': 0, 'SA': 0, 'W': 0
+  };
+
   const sanitizedSubjects = subjects.map(s => ({
     subjectName: s.subjectName,
-    marks: Number(s.marks) || 0
+    subjectCode: String(s.subjectCode || '').trim().toUpperCase(),
+    grade: String(s.grade || 'U').toUpperCase().trim(),
+    credits: Number(s.credits) || 0
   }));
-  const total = sanitizedSubjects.reduce((acc, sub) => acc + sub.marks, 0);
-  const average = total / sanitizedSubjects.length;
-  const percentage = (total / (sanitizedSubjects.length * 100)) * 100;
-  
-  let grade;
-  if (percentage >= 90) grade = 'A+';
-  else if (percentage >= 80) grade = 'A';
-  else if (percentage >= 70) grade = 'B';
-  else if (percentage >= 60) grade = 'C';
-  else if (percentage >= 50) grade = 'D';
-  else grade = 'F';
 
-  return { sanitizedSubjects, total, average, grade };
+  let totalPoints = 0;
+  let totalCredits = 0;
+
+  sanitizedSubjects.forEach(sub => {
+    const points = gradePoints[sub.grade] || 0;
+    totalPoints += (points * sub.credits);
+    totalCredits += sub.credits;
+  });
+
+  const gpa = totalCredits > 0 ? (totalPoints / totalCredits).toFixed(2) : 0;
+  
+  // Overall status
+  const hasFailed = sanitizedSubjects.some(s => ['U', 'RA', 'SA'].includes(s.grade));
+  const finalGrade = hasFailed ? 'FAIL' : (gpa >= 9 ? 'O' : gpa >= 8 ? 'A+' : gpa >= 7 ? 'A' : gpa >= 6 ? 'B+' : gpa >= 5 ? 'B' : 'C');
+
+  return { 
+    sanitizedSubjects, 
+    total: totalPoints, 
+    average: gpa, // Average is used as GPA
+    grade: finalGrade 
+  };
 };
 
 // Admin Login
@@ -126,17 +141,84 @@ exports.getAllStudents = async (req, res) => {
 // --- SUBJECT MAPPING ---
 
 exports.mapSubjects = async (req, res) => {
-  const { department, semester, subjectNames } = req.body;
+  const { department, semester, subjects } = req.body;
   try {
     const cleanDept = String(department || '').trim().toUpperCase();
-    const cleanSubjects = subjectNames.map(s => String(s || '').trim()).filter(s => s !== '');
+    const cleanSubjects = subjects.map(s => ({
+      name: String(s.name || '').trim(),
+      code: String(s.code || '').trim().toUpperCase(),
+      credits: Number(s.credits || 0)
+    })).filter(s => s.name !== '');
 
     const updated = await Subject.findOneAndUpdate(
       { department: cleanDept, semester: Number(semester) },
-      { department: cleanDept, semester: Number(semester), subjectNames: cleanSubjects },
+      { department: cleanDept, semester: Number(semester), subjects: cleanSubjects },
       { upsert: true, new: true }
     );
-    res.json({ message: "Curriculum updated successfully", updated });
+
+    // Back-propagate updates to existing results
+    const existingResults = await Result.find({ department: cleanDept, semester: Number(semester) });
+    
+    if (existingResults.length > 0) {
+      const subjectMap = {};
+      cleanSubjects.forEach(s => {
+        subjectMap[s.name.toUpperCase()] = { code: s.code, credits: s.credits };
+      });
+
+      for (const result of existingResults) {
+        let modified = false;
+        
+        // Update subjects with new metadata
+        // Use manual mapping to avoid Mongoose serialization issues
+        const updatedSubjects = result.subjects.map(sub => {
+          const sName = sub.subjectName; // Direct access works best on subdocs
+          const sCode = sub.subjectCode;
+          const sGrade = sub.grade;
+           // Ensure verification of existing credits, default to 0 if missing
+          const sCredits = typeof sub.credits === 'number' ? sub.credits : 0;
+
+          if (!sName) return null; // Skip malformed entries
+
+          const key = sName.toUpperCase().trim();
+          let newCode = sCode;
+          let newCredits = sCredits;
+
+          if (subjectMap[key]) {
+             // If matched, force update to curriculum values
+             if (newCode !== subjectMap[key].code || newCredits !== subjectMap[key].credits) {
+                newCode = subjectMap[key].code;
+                newCredits = subjectMap[key].credits;
+                modified = true; 
+             }
+          } else if (!newCode) {
+             // Fix missing codes for validation
+             newCode = '---';
+             modified = true;
+          }
+
+          return { 
+            subjectName: sName, 
+            subjectCode: newCode, 
+            credits: newCredits, 
+            grade: sGrade 
+          };
+        }).filter(s => s !== null);
+
+        if (modified) {
+          // Recalculate GPA/Total
+          const { sanitizedSubjects, total, average, grade } = calculateResultData(updatedSubjects);
+          
+          result.subjects = sanitizedSubjects;
+          result.total = total;
+          result.average = average;
+          result.grade = grade;
+          
+          await result.save();
+        }
+      }
+    }
+
+    res.json({ message: "Curriculum updated and synced with existing results", updated });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -145,8 +227,17 @@ exports.mapSubjects = async (req, res) => {
 exports.getSubjects = async (req, res) => {
   const { department, semester } = req.query;
   try {
-    const map = await Subject.findOne({ department, semester });
-    res.json(map ? map.subjectNames : []);
+    const map = await Subject.findOne({ department: String(department).toUpperCase(), semester: Number(semester) });
+    res.json(map ? map.subjects : []);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getAllSubjectMaps = async (req, res) => {
+  try {
+    const maps = await Subject.find().sort({ department: 1, semester: 1 });
+    res.json(maps);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -187,11 +278,30 @@ exports.addResult = async (req, res) => {
 exports.batchPublishResults = async (req, res) => {
   const { department, batch, semester } = req.body;
   try {
-    const result = await Result.updateMany(
-      { department, batch, semester: Number(semester) },
-      { published: true }
-    );
+    const cleanDept = String(department || '').trim().toUpperCase();
+    const cleanBatch = String(batch || '').trim().toUpperCase();
+    
+    const query = { batch: cleanBatch, semester: Number(semester) };
+    if (cleanDept !== 'ALL') {
+      query.department = cleanDept;
+    }
+
+    const result = await Result.updateMany(query, { published: true });
     res.json({ message: `Successfully published ${result.modifiedCount} results` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.toggleResultStatus = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await Result.findById(id);
+    if (!result) return res.status(404).json({ message: "Result not found" });
+    
+    result.published = !result.published;
+    await result.save();
+    res.json({ message: `Result ${result.published ? 'published' : 'moved to draft'}`, published: result.published });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

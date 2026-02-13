@@ -26,10 +26,11 @@ exports.login = async (req, res) => {
 // View Result
 exports.viewResult = async (req, res) => {
   try {
-    const student = await Student.findOne({ rollNo: req.params.rollNo });
+    const cleanRoll = String(req.params.rollNo || '').trim().toUpperCase();
+    const student = await Student.findOne({ rollNo: cleanRoll });
     if (!student) return res.status(404).json({ message: "Student not found" });
     
-    const results = await Result.find({ studentId: student._id, published: true });
+    const results = await Result.find({ studentId: student._id, published: true }).sort({ semester: 1 });
     res.json(results);
   } catch (error) {
     res.status(500).json({ error: error.message });
